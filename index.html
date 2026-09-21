@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAQL Optimizer</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['Fira Code', 'monospace'],
+                    },
+                    colors: {
+                        editor: '#1e1e1e',
+                        panel: '#252526',
+                        accent: '#007acc'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #111111;
+            color: #e0e0e0;
+        }
+        /* Custom scrollbar for webkit */
+        ::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1e1e1e; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #424242; 
+            border-radius: 5px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555; 
+        }
+        
+        .glass-panel {
+            background: rgba(37, 37, 38, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #input-query {
+            outline: none;
+            resize: none;
+        }
+        
+        #input-query:focus {
+            border-color: #007acc;
+            box-shadow: 0 0 0 1px #007acc;
+        }
+
+        .markdown-output pre {
+            border-radius: 0.5rem;
+            margin-top: 1rem;
+            margin-bottom: 1rem;
+            background-color: #1e1e1e !important;
+            border: 1px solid #333;
+        }
+        .markdown-output p {
+            margin-bottom: 1rem;
+            line-height: 1.6;
+            color: #cccccc;
+        }
+        .markdown-output strong {
+            color: #ffffff;
+        }
+        .markdown-output code:not([class*="language-"]) {
+            background-color: #333;
+            padding: 0.2rem 0.4rem;
+            border-radius: 0.25rem;
+            font-family: 'Fira Code', monospace;
+            font-size: 0.875em;
+        }
+
+        /* Code Block Wrapper and Copy Button */
+        .code-wrapper {
+            position: relative;
+            margin-top: 1rem;
+            margin-bottom: 1rem;
+        }
+        .code-wrapper pre {
+            margin: 0 !important;
+            padding-top: 2.5rem !important; /* Make room for the button */
+        }
+        .copy-code-btn {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            background: #2d2d2d;
+            border: 1px solid #444;
+            color: #ccc;
+            padding: 0.25rem 0.6rem;
+            border-radius: 0.375rem;
+            font-size: 0.75rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            z-index: 10;
+        }
+        .copy-code-btn:hover {
+            background: #444;
+            color: #fff;
+            border-color: #666;
+        }
+
+        /* Loading Spinner */
+        .spinner {
+            border: 3px solid rgba(255,255,255,0.1);
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border-left-color: #fff;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="h-screen flex flex-col overflow-hidden font-sans">
+
+    <header class="flex items-center justify-between px-6 py-4 glass-panel border-b border-gray-800 z-10">
+        <div class="flex items-center gap-3">
+            <svg class="w-8 h-8 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+            </svg>
+            <div>
+                <h1 class="text-xl font-bold tracking-tight text-white">SAQL Optimizer</h1>
+            </div>
+        </div>
+        <button id="optimize-btn" class="bg-accent hover:bg-blue-600 text-white px-5 py-2 rounded-md font-medium transition-colors flex items-center gap-2 shadow-lg shadow-blue-900/20 disabled:opacity-50 disabled:cursor-not-allowed">
+            <span>Optimize Query</span>
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+        </button>
+    </header>
+
+    <main class="flex-1 flex flex-col md:flex-row overflow-hidden relative">
+        
+        <section class="flex-1 flex flex-col border-r border-gray-800 bg-editor relative h-1/2 md:h-full">
+            <div class="px-4 py-2 bg-panel border-b border-gray-800 flex justify-between items-center text-sm text-gray-400">
+                <span class="flex items-center gap-2"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg> Input Query</span>
+                <div class="flex items-center gap-3">
+                    <button id="clear-btn" class="text-xs hover:text-white transition-colors flex items-center gap-1" title="Clear Input">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg> Clear
+                    </button>
+                    <span class="text-xs uppercase tracking-wider bg-gray-800 px-2 py-0.5 rounded text-gray-300">SAQL</span>
+                </div>
+            </div>
+            <textarea id="input-query" class="flex-1 w-full bg-transparent text-gray-300 p-4 font-mono text-sm resize-none focus:outline-none" placeholder="Paste your complex SAQL query here...&#10;&#10;Example:&#10;q = load &quot;Opportunities&quot;;&#10;q = filter q by date('CloseDate_Year', 'CloseDate_Month', 'CloseDate_Day') in [&quot;1 year ago&quot; .. &quot;current year&quot;];&#10;q = group q by 'StageName';&#10;q = foreach q generate 'StageName' as 'StageName', sum('Amount') as 'sum_Amount';&#10;q = order q by 'StageName' asc;&#10;q = limit q 2000;"></textarea>
+        </section>
+
+        <section class="flex-1 flex flex-col bg-[#1e1e1e] relative h-1/2 md:h-full">
+            <div class="px-4 py-2 bg-panel border-b border-gray-800 flex justify-between items-center text-sm text-gray-400">
+                <span class="flex items-center gap-2"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Optimized Output</span>
+                <button id="copy-btn" class="hidden text-xs hover:text-white transition-colors flex items-center gap-1" title="Copy Optimized Code">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg> Copy Code
+                </button>
+            </div>
+            <div id="output-container" class="flex-1 p-6 overflow-y-auto">
+                <div id="empty-state" class="h-full flex flex-col items-center justify-center text-gray-500 opacity-60">
+                    <svg class="w-16 h-16 mb-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                    <p class="text-sm text-center max-w-xs">Enter a SAQL query and click optimize. The AI will analyze, refactor, and explain the improvements.</p>
+                </div>
+                <div id="loading-state" class="hidden h-full flex flex-col items-center justify-center text-blue-400">
+                    <div class="spinner mb-4"></div>
+                    <p class="text-sm font-medium animate-pulse">Analyzing and optimizing query...</p>
+                </div>
+                <div id="error-state" class="hidden p-4 mb-4 text-sm text-red-400 bg-red-900/20 border border-red-900/50 rounded-lg">
+                    <strong class="font-bold block mb-1">Optimization Failed</strong>
+                    <span id="error-message">An error occurred while communicating with the AI.</span>
+                </div>
+                <div id="result-content" class="hidden markdown-output text-sm">
+                    <!-- Parsed markdown will be injected here -->
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-sql.min.js"></script>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const inputQuery = document.getElementById('input-query');
+            const optimizeBtn = document.getElementById('optimize-btn');
+            const copyBtn = document.getElementById('copy-btn');
+            const clearBtn = document.getElementById('clear-btn');
+            
+            const emptyState = document.getElementById('empty-state');
+            const loadingState = document.getElementById('loading-state');
+            const errorState = document.getElementById('error-state');
+            const errorMessage = document.getElementById('error-message');
+            const resultContent = document.getElementById('result-content');
+
+            let lastOptimizedCode = "";
+
+            // System prompt defining the AI's role and expected output format
+            const systemPrompt = `You are an expert in Salesforce Analytics Query Language (SAQL). 
+Your task is to take a provided SAQL query and optimize it for performance, efficiency, readability, and modern SAQL best practices.
+Format your response exactly as follows:
+1. First, provide ONLY the optimized SAQL query enclosed in a markdown code block (using \`\`\`saql and \`\`\`).
+2. After the code block, provide a concise explanation (in bullet points) of the specific optimizations and improvements you made.
+Do not include any greeting or conversational filler before the code block.`;
+
+            // Simple Markdown parser to handle code blocks, bold text, and paragraphs
+            function parseMarkdown(md) {
+                let html = '';
+                
+                // Extract code blocks first to protect them from paragraph parsing
+                const codeBlocks = [];
+                md = md.replace(/```([\s\S]*?)```/g, (match, p1) => {
+                    const lines = p1.trim().split('\n');
+                    const lang = lines[0].trim();
+                    const code = lines.slice(1).join('\n');
+                    // Map saql to sql for prism highlighting
+                    const displayLang = (lang.toLowerCase() === 'saql') ? 'sql' : lang || 'none';
+                    
+                    if(lang.toLowerCase() === 'saql' || !lastOptimizedCode) {
+                        lastOptimizedCode = code; // Store for copy button
+                    }
+
+                    const safeCodeToDisplay = escapeHtml(code);
+                    const safeCodeForAttr = encodeURIComponent(code);
+
+                    codeBlocks.push(`
+                        <div class="code-wrapper">
+                            <button class="copy-code-btn" data-code="${safeCodeForAttr}" title="Copy Code">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                                <span>Copy</span>
+                            </button>
+                            <pre><code class="language-${displayLang}">${safeCodeToDisplay}</code></pre>
+                        </div>
+                    `);
+                    return `___CODE_BLOCK_${codeBlocks.length - 1}___`;
+                });
+
+                // Parse bold
+                md = md.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                
+                // Parse inline code
+                md = md.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+                // Split into paragraphs (treating bullet points simply as lines within paragraphs for now to keep it lightweight)
+                const paragraphs = md.split(/\n\n+/);
+                paragraphs.forEach(p => {
+                    if (p.includes('___CODE_BLOCK_')) {
+                        // If it's just a code block placeholder, don't wrap in <p>
+                        html += p;
+                    } else if (p.trim()) {
+                        // Handle basic bullet points visually
+                        let formattedText = p.replace(/\n- /g, '<br/>• ');
+                        if(formattedText.startsWith('- ')) formattedText = '• ' + formattedText.substring(2);
+                        if(formattedText.startsWith('* ')) formattedText = '• ' + formattedText.substring(2);
+                        
+                        html += `<p>${formattedText}</p>`;
+                    }
+                });
+
+                // Re-insert code blocks
+                codeBlocks.forEach((block, index) => {
+                    html = html.replace(`___CODE_BLOCK_${index}___`, block);
+                });
+
+                return html;
+            }
+
+            function escapeHtml(unsafe) {
+                return unsafe
+                     .replace(/&/g, "&amp;")
+                     .replace(/</g, "&lt;")
+                     .replace(/>/g, "&gt;")
+                     .replace(/"/g, "&quot;")
+                     .replace(/'/g, "&#039;");
+            }
+
+            // Function to call the Gemini API
+            async function optimizeQuery(queryText) {
+                const apiKey = ""; // Implicitly provided by Canvas environment
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+                const payload = {
+                    contents: [{
+                        role: "user",
+                        parts: [{ text: queryText }]
+                    }],
+                    systemInstruction: {
+                        parts: [{ text: systemPrompt }]
+                    }
+                };
+
+                // Retry logic for potential 429s (Exponential Backoff)
+                const maxRetries = 3;
+                let delay = 1000;
+
+                for (let i = 0; i < maxRetries; i++) {
+                    try {
+                        const response = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (response.status === 429) {
+                            await new Promise(resolve => setTimeout(resolve, delay));
+                            delay *= 2;
+                            continue;
+                        }
+
+                        if (!response.ok) {
+                            throw new Error(`API Error: ${response.status} ${response.statusText}`);
+                        }
+
+                        const result = await response.json();
+                        const candidate = result.candidates?.[0];
+
+                        if (candidate && candidate.content?.parts?.[0]?.text) {
+                            return candidate.content.parts[0].text;
+                        } else {
+                            throw new Error("Unexpected response structure from AI model.");
+                        }
+
+                    } catch (error) {
+                        if (i === maxRetries - 1) throw error;
+                    }
+                }
+                throw new Error("Max retries reached. Service might be unavailable.");
+            }
+
+            // Main interaction logic
+            optimizeBtn.addEventListener('click', async () => {
+                const query = inputQuery.value.trim();
+                
+                if (!query) {
+                    showError("Please enter a SAQL query to optimize.");
+                    return;
+                }
+
+                // UI State: Loading
+                optimizeBtn.disabled = true;
+                optimizeBtn.innerHTML = '<div class="spinner w-4 h-4 mr-2"></div> Optimizing...';
+                
+                emptyState.classList.add('hidden');
+                errorState.classList.add('hidden');
+                resultContent.classList.add('hidden');
+                copyBtn.classList.add('hidden');
+                loadingState.classList.remove('hidden');
+
+                try {
+                    // Call API
+                    const aiResponse = await optimizeQuery(query);
+                    
+                    // Parse Markdown and inject
+                    lastOptimizedCode = ""; // Reset before parsing
+                    const htmlOutput = parseMarkdown(aiResponse);
+                    resultContent.innerHTML = htmlOutput;
+                    
+                    // Re-run syntax highlighting on newly injected code blocks
+                    Prism.highlightAllUnder(resultContent);
+
+                    // UI State: Success
+                    loadingState.classList.add('hidden');
+                    resultContent.classList.remove('hidden');
+                    if (lastOptimizedCode) {
+                        copyBtn.classList.remove('hidden');
+                    }
+                    
+                } catch (error) {
+                    // UI State: Error
+                    showError(error.message || "Failed to optimize the query. Please try again later.");
+                } finally {
+                    optimizeBtn.disabled = false;
+                    optimizeBtn.innerHTML = '<span>Optimize Query</span><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>';
+                }
+            });
+
+            // Event delegation for dynamic inline copy buttons in code blocks
+            resultContent.addEventListener('click', (e) => {
+                const btn = e.target.closest('.copy-code-btn');
+                if (!btn) return;
+                
+                const codeToCopy = btn.getAttribute('data-code');
+                if (codeToCopy) {
+                    try {
+                        const decodedCode = decodeURIComponent(codeToCopy);
+                        const textArea = document.createElement("textarea");
+                        textArea.value = decodedCode;
+                        textArea.style.position = "fixed";
+                        
+                        document.body.appendChild(textArea);
+                        textArea.focus();
+                        textArea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textArea);
+                        
+                        // Visual feedback specific to this button
+                        const originalHtml = btn.innerHTML;
+                        btn.innerHTML = '<svg class="w-3.5 h-3.5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg><span class="text-green-400">Copied!</span>';
+                        btn.style.borderColor = '#4ade80';
+                        btn.style.background = '#1a2e1a';
+                        
+                        setTimeout(() => {
+                            btn.innerHTML = originalHtml;
+                            btn.style.borderColor = '';
+                            btn.style.background = '';
+                        }, 2000);
+                    } catch (err) {
+                        console.error('Failed to copy code from block', err);
+                    }
+                }
+            });
+
+            function showError(msg) {
+                loadingState.classList.add('hidden');
+                emptyState.classList.add('hidden');
+                resultContent.classList.add('hidden');
+                errorState.classList.remove('hidden');
+                errorMessage.textContent = msg;
+            }
+
+            // Clear input functionality
+            clearBtn.addEventListener('click', () => {
+                inputQuery.value = '';
+                inputQuery.focus();
+                
+                // Reset output state
+                emptyState.classList.remove('hidden');
+                loadingState.classList.add('hidden');
+                errorState.classList.add('hidden');
+                resultContent.classList.add('hidden');
+                copyBtn.classList.add('hidden');
+            });
+
+            // Copy to clipboard functionality
+            copyBtn.addEventListener('click', () => {
+                if (lastOptimizedCode) {
+                    // Using modern clipboard API if available, falling back to execCommand to ensure it works in iframes
+                    try {
+                        const textArea = document.createElement("textarea");
+                        textArea.value = lastOptimizedCode;
+                        textArea.style.position = "fixed";  // Avoid scrolling to bottom
+                        document.body.appendChild(textArea);
+                        textArea.focus();
+                        textArea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textArea);
+                        
+                        // Visual feedback
+                        const originalContent = copyBtn.innerHTML;
+                        copyBtn.innerHTML = '<svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg> <span class="text-green-400">Copied!</span>';
+                        setTimeout(() => {
+                            copyBtn.innerHTML = originalContent;
+                        }, 2000);
+                    } catch (err) {
+                        console.error('Failed to copy', err);
+                    }
+                }
+            });
+        });
+    </script>
+</body>
+</html>
